@@ -1,0 +1,1249 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>作業完了報告書作成システム</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Font Awesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <!-- html2pdf.js -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+
+  <style>
+    /* 日本の帳票向けフォント設定 */
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", "Hiragino Kaku Gothic ProN", "BIZ UDPGothic", Meiryo, sans-serif;
+      -webkit-tap-highlight-color: transparent;
+    }
+    
+    /* A4帳票の精密スタイル */
+    .sheet-a4 {
+      width: 210mm;
+      min-height: 297mm;
+      padding: 15mm 15mm 12mm 15mm;
+      box-sizing: border-box;
+      background: #ffffff;
+      color: #000000;
+      line-height: 1.35;
+      font-size: 10pt;
+      position: relative;
+    }
+
+    @media screen and (max-width: 1023px) {
+      .preview-container {
+        transform-origin: top center;
+      }
+    }
+
+    /* 印刷用スタイル */
+    @media print {
+      body {
+        background: none;
+        padding: 0;
+      }
+      .no-print {
+        display: none !important;
+      }
+      .sheet-a4 {
+        box-shadow: none;
+        margin: 0;
+        width: 100%;
+        min-height: 100%;
+        page-break-after: always;
+      }
+    }
+
+    .report-table th, .report-table td {
+      border: 1px solid #1a1a1a;
+    }
+
+    /* サインキャンバスの描画最適化 */
+    #signCanvas, #modalSignCanvas {
+      touch-action: none;
+    }
+
+    /* カスタムスクロールバー */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #cbd5e1;
+      border-radius: 3px;
+    }
+  </style>
+</head>
+<body class="bg-slate-100 text-slate-800 min-h-screen pb-16 lg:pb-0">
+
+  <!-- ヘッダーナビゲーション -->
+  <header class="bg-slate-900 text-white sticky top-0 z-30 shadow-md border-b border-slate-700">
+    <div class="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center">
+      <div class="flex items-center space-x-3">
+        <div class="w-9 h-9 bg-blue-600 rounded-lg flex items-center justify-center font-bold text-white shadow">
+          <i class="fa-solid fa-file-signature"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-base sm:text-lg leading-tight">作業完了報告書作成</h1>
+          <p class="text-xs text-slate-400">バルカートルクシステム仕様 <span class="ml-1 bg-blue-800 text-blue-200 px-1.5 py-0.5 rounded text-[10px] font-mono">Ver 10.01</span></p>
+        </div>
+      </div>
+
+      <!-- アクションボタン群 -->
+      <div class="flex items-center space-x-2">
+        <button id="cameraOcrBtn" type="button" class="bg-indigo-600 hover:bg-indigo-500 text-white text-xs sm:text-sm font-medium py-2 px-3 sm:px-4 rounded-lg flex items-center space-x-1.5 shadow transition active:scale-95">
+          <i class="fa-solid fa-camera"></i>
+          <span class="hidden sm:inline">カメラで自動読取</span>
+          <span class="sm:hidden">OCR</span>
+        </button>
+
+        <button id="openPdfModalBtn" type="button" class="bg-emerald-600 hover:bg-emerald-500 text-white text-xs sm:text-sm font-semibold py-2 px-3 sm:px-4 rounded-lg flex items-center space-x-1.5 shadow transition active:scale-95">
+          <i class="fa-solid fa-file-pdf"></i>
+          <span>PDF出力</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- モバイル用タブ切替バー (スマホ画面でのみ表示) -->
+    <div class="flex lg:hidden bg-slate-800 border-t border-slate-700 px-4">
+      <button id="tabFormBtn" class="flex-1 py-2.5 text-center text-sm font-medium text-blue-400 border-b-2 border-blue-400 flex items-center justify-center space-x-2">
+        <i class="fa-solid fa-pen-to-square"></i>
+        <span>入力フォーム</span>
+      </button>
+      <button id="tabPreviewBtn" class="flex-1 py-2.5 text-center text-sm font-medium text-slate-400 border-b-2 border-transparent flex items-center justify-center space-x-2">
+        <i class="fa-solid fa-eye"></i>
+        <span>帳票プレビュー</span>
+      </button>
+    </div>
+  </header>
+
+  <!-- 非表示のカメラ・ファイル入力 -->
+  <input type="file" id="cameraInput" accept="image/*" class="hidden" capture="environment">
+
+  <!-- メインコンテンツ -->
+  <main class="max-w-7xl mx-auto p-3 sm:p-4 lg:p-6">
+    <div class="grid grid-cols-1 lg:grid-cols-12 gap-6">
+
+      <!-- ============================================== -->
+      <!-- 左ペイン: 入力フォーム -->
+      <!-- ============================================== -->
+      <div id="formContainer" class="lg:col-span-5 space-y-4 block">
+        
+        <!-- 基本情報セクション -->
+        <div class="bg-white rounded-xl p-4 sm:p-5 shadow-sm border border-slate-200">
+          <div class="flex items-center justify-between pb-3 mb-4 border-b border-slate-100">
+            <h2 class="font-bold text-slate-800 flex items-center text-base">
+              <span class="w-2.5 h-2.5 bg-blue-600 rounded-full mr-2"></span>
+              書類基本情報
+            </h2>
+            <button id="setTodayBtn" type="button" class="text-xs bg-slate-100 hover:bg-slate-200 text-slate-600 px-2.5 py-1 rounded transition">
+              今日の日付を設定
+            </button>
+          </div>
+
+          <div class="space-y-3.5">
+            <div class="grid grid-cols-2 gap-3">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">発行日</label>
+                <input type="date" id="inputIssueDate" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">受注番号</label>
+                <input type="text" id="inputOrderNo" placeholder="例: 240828-01" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              </div>
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">ご注文者 <span class="text-red-500">*</span></label>
+              <input type="text" id="inputCustomer" placeholder="例: ○○工業株式会社" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">入構先 <span class="text-red-500">*</span></label>
+              <input type="text" id="inputSite" placeholder="例: ○○化学 鹿島工場" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">現場名称</label>
+              <input type="text" id="inputSiteDetail" placeholder="例: 第一製造プラント 3F" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">案件名 <span class="text-red-500">*</span></label>
+              <input type="text" id="inputProjectName" placeholder="例: 定期修理 ボルト締結工事" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">設備名</label>
+              <input type="text" id="inputFacility" placeholder="例: 反応器 R-101 マンホール部" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            </div>
+
+            <div class="grid grid-cols-2 gap-3 pt-1">
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">作業開始日</label>
+                <input type="date" id="inputStartDate" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              </div>
+              <div>
+                <label class="block text-xs font-semibold text-slate-600 mb-1">作業完了日</label>
+                <input type="date" id="inputEndDate" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- 完了時確認セクション -->
+        <div class="bg-white rounded-xl p-4 sm:p-5 shadow-sm border border-slate-200">
+          <h2 class="font-bold text-slate-800 flex items-center text-base pb-3 mb-4 border-b border-slate-100">
+            <span class="w-2.5 h-2.5 bg-emerald-600 rounded-full mr-2"></span>
+            完了時確認項目
+          </h2>
+
+          <div class="space-y-3">
+            <label class="flex items-start space-x-3 p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 cursor-pointer transition">
+              <input type="checkbox" id="chk1" class="w-5 h-5 text-blue-600 rounded mt-0.5 border-slate-300 focus:ring-blue-500" checked>
+              <span class="text-xs sm:text-sm font-medium text-slate-700">作業内容に相違がないか</span>
+            </label>
+
+            <label class="flex items-start space-x-3 p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 cursor-pointer transition">
+              <input type="checkbox" id="chk2" class="w-5 h-5 text-blue-600 rounded mt-0.5 border-slate-300 focus:ring-blue-500" checked>
+              <span class="text-xs sm:text-sm font-medium text-slate-700">作業結果内部異物混入の有無（内部養生含む）</span>
+            </label>
+
+            <label class="flex items-start space-x-3 p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 cursor-pointer transition">
+              <input type="checkbox" id="chk3" class="w-5 h-5 text-blue-600 rounded mt-0.5 border-slate-300 focus:ring-blue-500" checked>
+              <span class="text-xs sm:text-sm font-medium text-slate-700">周辺設備に損傷等ないか</span>
+            </label>
+
+            <label class="flex items-start space-x-3 p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 cursor-pointer transition">
+              <input type="checkbox" id="chk4" class="w-5 h-5 text-blue-600 rounded mt-0.5 border-slate-300 focus:ring-blue-500" checked>
+              <span class="text-xs sm:text-sm font-medium text-slate-700">後片付け、清掃</span>
+            </label>
+
+            <label class="flex items-start space-x-3 p-2.5 rounded-lg border border-slate-100 hover:bg-slate-50 cursor-pointer transition">
+              <input type="checkbox" id="chk5" class="w-5 h-5 text-blue-600 rounded mt-0.5 border-slate-300 focus:ring-blue-500" checked>
+              <span class="text-xs sm:text-sm font-medium text-slate-700">火気作業後の残火確認</span>
+            </label>
+
+            <!-- 記録提出区分 -->
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200">
+              <div class="flex items-center justify-between mb-2">
+                <label class="flex items-center space-x-2 cursor-pointer">
+                  <input type="checkbox" id="chkRecord" class="w-4 h-4 text-blue-600 rounded border-slate-300" checked>
+                  <span class="text-xs sm:text-sm font-semibold text-slate-700">記録提出</span>
+                </label>
+                <div class="flex items-center space-x-2">
+                  <select id="selectRecordStatus" class="text-xs bg-white border border-slate-300 rounded px-2.5 py-1.5 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                    <option value="済">済</option>
+                    <option value="後日提出">後日提出</option>
+                    <option value="不要">不要</option>
+                  </select>
+                </div>
+              </div>
+              <p class="text-[11px] text-slate-500">※提出状況に合わせて（済・後日提出・不要）を選択してください</p>
+            </div>
+
+            <!-- 余白・追加記述 -->
+            <div>
+              <label class="block text-xs font-semibold text-slate-600 mb-1">特記事項・備考（余白追記）</label>
+              <textarea id="inputRemarks" rows="2" placeholder="特記事項や補足事項があれば入力してください" class="w-full text-xs sm:text-sm rounded-lg border border-slate-300 p-2.5 focus:ring-2 focus:ring-blue-500 focus:outline-none"></textarea>
+            </div>
+          </div>
+        </div>
+
+        <!-- 担当者セクション -->
+        <div class="bg-white rounded-xl p-4 sm:p-5 shadow-sm border border-slate-200">
+          <h2 class="font-bold text-slate-800 flex items-center text-base pb-3 mb-4 border-b border-slate-100">
+            <span class="w-2.5 h-2.5 bg-amber-500 rounded-full mr-2"></span>
+            自社担当者情報
+          </h2>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <!-- 作業担当 -->
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2.5">
+              <span class="text-xs font-bold text-slate-700 block border-b pb-1">作業担当</span>
+              <div>
+                <label class="block text-[11px] text-slate-500 mb-0.5">所属営業所</label>
+                <select id="selectWorkBranch" class="w-full text-xs bg-white border border-slate-300 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="中部営業所">中部営業所</option>
+                  <option value="北海道営業所">北海道営業所</option>
+                  <option value="仙台営業所">仙台営業所</option>
+                  <option value="関東営業所">関東営業所</option>
+                  <option value="関西営業所">関西営業所</option>
+                  <option value="岡山営業所">岡山営業所</option>
+                  <option value="山口営業所">山口営業所</option>
+                  <option value="九州営業所">九州営業所</option>
+                  <option value="工事部工事グループ">工事部工事グループ</option>
+                  <option value="本社">本社</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-500 mb-0.5">氏名</label>
+                <input type="text" id="inputWorkerName" placeholder="担当者氏名" class="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              </div>
+            </div>
+
+            <!-- 営業担当 -->
+            <div class="p-3 bg-slate-50 rounded-lg border border-slate-200 space-y-2.5">
+              <span class="text-xs font-bold text-slate-700 block border-b pb-1">営業担当</span>
+              <div>
+                <label class="block text-[11px] text-slate-500 mb-0.5">所属営業所</label>
+                <select id="selectSalesBranch" class="w-full text-xs bg-white border border-slate-300 rounded-lg p-2 font-medium text-slate-700 focus:outline-none focus:ring-2 focus:ring-blue-500">
+                  <option value="中部営業所">中部営業所</option>
+                  <option value="北海道営業所">北海道営業所</option>
+                  <option value="仙台営業所">仙台営業所</option>
+                  <option value="関東営業所">関東営業所</option>
+                  <option value="関西営業所">関西営業所</option>
+                  <option value="岡山営業所">岡山営業所</option>
+                  <option value="山口営業所">山口営業所</option>
+                  <option value="九州営業所">九州営業所</option>
+                  <option value="工事部工事グループ">工事部工事グループ</option>
+                  <option value="本社">本社</option>
+                </select>
+              </div>
+              <div>
+                <label class="block text-[11px] text-slate-500 mb-0.5">氏名</label>
+                <input type="text" id="inputSalesName" placeholder="担当者氏名" class="w-full text-xs sm:text-sm bg-white border border-slate-300 rounded-lg px-2.5 py-1.5 focus:outline-none focus:ring-2 focus:ring-blue-500">
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- お客様検収・サインセクション -->
+        <div class="bg-white rounded-xl p-4 sm:p-5 shadow-sm border border-slate-200">
+          <h2 class="font-bold text-slate-800 flex items-center text-base pb-3 mb-4 border-b border-slate-100">
+            <span class="w-2.5 h-2.5 bg-purple-600 rounded-full mr-2"></span>
+            お客様検収・ご署名
+          </h2>
+
+          <div class="space-y-4">
+            <!-- 検収日設定 -->
+            <div class="flex items-center space-x-3">
+              <div class="flex-1">
+                <label class="block text-xs font-semibold text-slate-600 mb-1">検収日</label>
+                <input type="date" id="inputInspectionDate" class="w-full text-sm rounded-lg border border-slate-300 px-3 py-2 focus:ring-2 focus:ring-blue-500 focus:outline-none">
+              </div>
+              <div class="pt-5">
+                <button id="clearInspectionDateBtn" type="button" class="text-xs text-slate-500 hover:text-red-600 py-2 px-2 underline">
+                  空欄にする
+                </button>
+              </div>
+            </div>
+
+            <!-- サイン入力エリア -->
+            <div>
+              <div class="flex items-center justify-between mb-1.5">
+                <label class="text-xs font-semibold text-slate-600">貴社名・ご署名（手書きサイン）</label>
+                <span class="text-[11px] text-blue-600">現場でタップしてサイン</span>
+              </div>
+
+              <!-- サイン枠 (クリックで横画面モーダル展開) -->
+              <div id="signTriggerArea" class="border-2 border-dashed border-slate-300 rounded-xl bg-slate-50 h-32 flex flex-col items-center justify-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/40 transition relative overflow-hidden group">
+                <img id="signaturePreviewImg" class="max-h-full max-w-full object-contain hidden" alt="署名プレビュー">
+                <div id="signaturePlaceholder" class="text-center p-4">
+                  <div class="w-10 h-10 mx-auto bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mb-1.5 group-hover:scale-110 transition">
+                    <i class="fa-solid fa-signature text-lg"></i>
+                  </div>
+                  <p class="text-xs font-bold text-slate-700">ここをタップして全画面サイン</p>
+                  <p class="text-[11px] text-slate-400">横画面で大きく綺麗に書けます</p>
+                </div>
+                <!-- サイン消去ボタン (サインが存在する場合) -->
+                <button id="btnRemoveSign" type="button" class="absolute top-2 right-2 bg-red-100 hover:bg-red-200 text-red-600 rounded-full w-7 h-7 flex items-center justify-center text-xs shadow hidden" title="サイン消去">
+                  <i class="fa-solid fa-trash-can"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- ============================================== -->
+      <!-- 右ペイン: 帳票リアルタイムプレビュー -->
+      <!-- ============================================== -->
+      <div id="previewContainer" class="lg:col-span-7 hidden lg:block">
+        <div class="sticky top-20">
+          
+          <!-- プレビュー切替ツールバー -->
+          <div class="bg-white p-3 rounded-t-xl border border-b-0 border-slate-200 flex flex-wrap items-center justify-between gap-2 shadow-sm">
+            <div class="flex items-center space-x-2">
+              <span class="text-xs font-bold text-slate-700">A4横 2面割付プレビュー</span>
+              <span class="text-[11px] text-slate-500">（左: 弊社控え / 右: お客様控え）</span>
+            </div>
+
+            <div class="text-xs text-slate-400 flex items-center space-x-1">
+              <i class="fa-solid fa-magnifying-glass"></i>
+              <span>Ver 10.01</span>
+            </div>
+          </div>
+
+          <!-- A4横シート表示領域 -->
+          <div class="bg-slate-200 p-2 sm:p-4 rounded-b-xl border border-slate-200 overflow-x-auto flex justify-center shadow-inner max-h-[calc(100vh-140px)] overflow-y-auto">
+            
+            <!-- 実際の印刷・出力対象 (A4 Landscape Paper: 297mm x 210mm) -->
+            <div id="reportSheet" class="bg-white shadow-xl text-black flex border border-slate-300" style="width: 297mm; min-height: 205mm; padding: 8mm; box-sizing: border-box; font-size: 8.5pt; line-height: 1.25;">
+              
+              <!-- ================= 左半面: 弊社控え ================= -->
+              <div class="w-1/2 pr-3 flex flex-col justify-between">
+                <div>
+                  <!-- ヘッダー -->
+                  <div class="flex justify-between items-start border-b border-black pb-1 mb-1.5">
+                    <div class="w-1/3">
+                      <div class="font-extrabold tracking-tighter text-[9px] leading-none text-slate-900">
+                        VALQUA<br>
+                        <span class="text-xs tracking-wider">TORQUE</span><br>
+                        <span class="text-[8px] tracking-widest text-slate-700">SYSTEM</span>
+                      </div>
+                    </div>
+                    <div class="w-1/3 text-center pt-0.5">
+                      <h1 class="text-base font-bold tracking-widest underline decoration-1 underline-offset-2" style="font-family: 'Hiragino Mincho ProN', 'BIZ UDPMincho', serif;">
+                        作業完了報告書
+                      </h1>
+                    </div>
+                    <div class="w-1/3 text-right text-[9px] leading-tight">
+                      <div class="font-bold text-slate-900">(弊社控え)</div>
+                      <div>発行日: <span class="pvIssueDate font-mono">____年__月__日</span></div>
+                      <div>受注番号: <span class="pvOrderNo font-mono font-medium">__________</span></div>
+                    </div>
+                  </div>
+
+                  <p class="text-[9.5px] mb-1.5 font-medium">以下の作業が完了いたしましたので、報告いたします。</p>
+
+                  <!-- 基本情報テーブル -->
+                  <table class="w-full report-table text-[9.5px] mb-2 border-collapse">
+                    <tbody>
+                      <tr>
+                        <th class="w-20 bg-slate-100 py-1 px-1.5 text-left font-semibold">ご注文者</th>
+                        <td class="pvCustomer py-1 px-2 font-medium"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">入構先</th>
+                        <td class="pvSite py-1 px-2 font-medium"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">現場名称</th>
+                        <td class="pvSiteDetail py-1 px-2"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">案件名</th>
+                        <td class="pvProjectName py-1 px-2 font-semibold"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">設備名</th>
+                        <td class="pvFacility py-1 px-2"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">作業開始日</th>
+                        <td class="pvStartDate py-1 px-2 font-mono">年　月　日</td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">作業完了日</th>
+                        <td class="pvEndDate py-1 px-2 font-mono">年　月　日</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <!-- 完了時確認 -->
+                  <div class="border border-black p-1.5 mb-2 text-[9px]">
+                    <div class="font-bold text-[9.5px] mb-1 border-b border-slate-300 pb-0.5">完了時確認</div>
+                    <div class="grid grid-cols-2 gap-y-1 gap-x-1.5">
+                      <div class="flex items-center space-x-1"><span class="pvChk1">☐</span><span>作業内容に相違がないか</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk4">☐</span><span>後片付け、清掃</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk2">☐</span><span>作業結果内部異物混入の有無(内部養生含む)</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk5">☐</span><span>火気作業後の残火確認</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk3">☐</span><span>周辺設備に損傷等ないか</span></div>
+                      <div class="flex items-center space-x-1 font-medium"><span class="pvChkRecord">☐</span><span>記録提出 (<span class="pvRecordStatus">済</span>)</span></div>
+                    </div>
+                    <div class="mt-1 pt-1 border-t border-dashed border-slate-300 text-[8.5px] text-slate-700 min-h-[22px]">
+                      <span class="font-semibold text-slate-500 mr-1">【特記事項】:</span>
+                      <span class="pvRemarks">特になし</span>
+                    </div>
+                  </div>
+
+                  <!-- 検収・署名 & 担当者 -->
+                  <table class="w-full report-table border-collapse mb-2 text-[9px]">
+                    <tbody>
+                      <tr>
+                        <td class="w-[60%] p-1.5 align-top">
+                          <div class="font-semibold text-[9px]">作業が完了したことを確認しました。</div>
+                          <div class="text-[9px] my-0.5 font-mono">検収日: <span class="pvInspectionDate underline">　　年　月　日</span></div>
+                          <div class="text-[8px] text-slate-600">貴社名・ご署名 (ご捺印)</div>
+                          <div class="h-20 w-full border border-slate-300 rounded bg-slate-50/50 flex items-center justify-center overflow-hidden my-0.5 relative">
+                            <img class="pvSignatureImg max-h-full max-w-full object-contain hidden" alt="署名">
+                            <div class="pvSignaturePlaceholder text-slate-300 text-[9px] italic">(ご署名欄)</div>
+                          </div>
+                        </td>
+                        <td class="w-[40%] p-0 align-top">
+                          <table class="w-full h-full border-collapse text-[8.5px]">
+                            <tr class="border-b border-black">
+                              <th class="w-9 bg-slate-100 p-1 text-center font-semibold border-r border-black">作業<br>担当</th>
+                              <td class="p-1">
+                                <div class="pvWorkBranch text-[8px] text-slate-600">中部営業所</div>
+                                <div class="pvWorkerName font-bold text-[9.5px] mt-0.5 min-h-[16px]"></div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <th class="w-9 bg-slate-100 p-1 text-center font-semibold border-r border-black">営業<br>担当</th>
+                              <td class="p-1">
+                                <div class="pvSalesBranch text-[8px] text-slate-600">中部営業所</div>
+                                <div class="pvSalesName font-bold text-[9.5px] mt-0.5 min-h-[16px]"></div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- フッター -->
+                <div class="border-t border-black pt-1 text-[8px] flex justify-between items-end leading-tight text-slate-700">
+                  <div>
+                    <div class="font-bold text-[9px] text-black">バルカートルクシステム株式会社</div>
+                    <div>〒474-0027 愛知県大府市追分町5-225 TEL:0562-45-5578</div>
+                  </div>
+                  <div class="font-mono text-slate-400 font-bold text-[9px]">Hyper Cat v10.01</div>
+                </div>
+              </div>
+
+              <!-- ================= 中央: 縦切り取り線 ================= -->
+              <div class="relative flex items-center justify-center px-1">
+                <div class="border-r border-dashed border-slate-400 h-full"></div>
+                <div class="absolute bg-white px-0.5 text-[8px] text-slate-400 rotate-90 select-none whitespace-nowrap">
+                  <i class="fa-solid fa-scissors"></i> キリトリ線
+                </div>
+              </div>
+
+              <!-- ================= 右半面: お客様控え ================= -->
+              <div class="w-1/2 pl-3 flex flex-col justify-between">
+                <div>
+                  <!-- ヘッダー -->
+                  <div class="flex justify-between items-start border-b border-black pb-1 mb-1.5">
+                    <div class="w-1/3">
+                      <div class="font-extrabold tracking-tighter text-[9px] leading-none text-slate-900">
+                        VALQUA<br>
+                        <span class="text-xs tracking-wider">TORQUE</span><br>
+                        <span class="text-[8px] tracking-widest text-slate-700">SYSTEM</span>
+                      </div>
+                    </div>
+                    <div class="w-1/3 text-center pt-0.5">
+                      <h1 class="text-base font-bold tracking-widest underline decoration-1 underline-offset-2" style="font-family: 'Hiragino Mincho ProN', 'BIZ UDPMincho', serif;">
+                        作業完了報告書
+                      </h1>
+                    </div>
+                    <div class="w-1/3 text-right text-[9px] leading-tight">
+                      <div class="font-bold text-slate-900">(お客様控え)</div>
+                      <div>発行日: <span class="pvIssueDate font-mono">____年__月__日</span></div>
+                      <div>受注番号: <span class="pvOrderNo font-mono font-medium">__________</span></div>
+                    </div>
+                  </div>
+
+                  <p class="text-[9.5px] mb-1.5 font-medium">以下の作業が完了いたしましたので、報告いたします。</p>
+
+                  <!-- 基本情報テーブル -->
+                  <table class="w-full report-table text-[9.5px] mb-2 border-collapse">
+                    <tbody>
+                      <tr>
+                        <th class="w-20 bg-slate-100 py-1 px-1.5 text-left font-semibold">ご注文者</th>
+                        <td class="pvCustomer py-1 px-2 font-medium"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">入構先</th>
+                        <td class="pvSite py-1 px-2 font-medium"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">現場名称</th>
+                        <td class="pvSiteDetail py-1 px-2"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">案件名</th>
+                        <td class="pvProjectName py-1 px-2 font-semibold"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">設備名</th>
+                        <td class="pvFacility py-1 px-2"></td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">作業開始日</th>
+                        <td class="pvStartDate py-1 px-2 font-mono">年　月　日</td>
+                      </tr>
+                      <tr>
+                        <th class="bg-slate-100 py-1 px-1.5 text-left font-semibold">作業完了日</th>
+                        <td class="pvEndDate py-1 px-2 font-mono">年　月　日</td>
+                      </tr>
+                    </tbody>
+                  </table>
+
+                  <!-- 完了時確認 -->
+                  <div class="border border-black p-1.5 mb-2 text-[9px]">
+                    <div class="font-bold text-[9.5px] mb-1 border-b border-slate-300 pb-0.5">完了時確認</div>
+                    <div class="grid grid-cols-2 gap-y-1 gap-x-1.5">
+                      <div class="flex items-center space-x-1"><span class="pvChk1">☐</span><span>作業内容に相違がないか</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk4">☐</span><span>後片付け、清掃</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk2">☐</span><span>作業結果内部異物混入の有無(内部養生含む)</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk5">☐</span><span>火気作業後の残火確認</span></div>
+                      <div class="flex items-center space-x-1"><span class="pvChk3">☐</span><span>周辺設備に損傷等ないか</span></div>
+                      <div class="flex items-center space-x-1 font-medium"><span class="pvChkRecord">☐</span><span>記録提出 (<span class="pvRecordStatus">済</span>)</span></div>
+                    </div>
+                    <div class="mt-1 pt-1 border-t border-dashed border-slate-300 text-[8.5px] text-slate-700 min-h-[22px]">
+                      <span class="font-semibold text-slate-500 mr-1">【特記事項】:</span>
+                      <span class="pvRemarks">特になし</span>
+                    </div>
+                  </div>
+
+                  <!-- 検収・署名 & 担当者 -->
+                  <table class="w-full report-table border-collapse mb-2 text-[9px]">
+                    <tbody>
+                      <tr>
+                        <td class="w-[60%] p-1.5 align-top">
+                          <div class="font-semibold text-[9px]">作業が完了したことを確認しました。</div>
+                          <div class="text-[9px] my-0.5 font-mono">検収日: <span class="pvInspectionDate underline">　　年　月　日</span></div>
+                          <div class="text-[8px] text-slate-600">貴社名・ご署名 (ご捺印)</div>
+                          <div class="h-20 w-full border border-slate-300 rounded bg-slate-50/50 flex items-center justify-center overflow-hidden my-0.5 relative">
+                            <img class="pvSignatureImg max-h-full max-w-full object-contain hidden" alt="署名">
+                            <div class="pvSignaturePlaceholder text-slate-300 text-[9px] italic">(ご署名欄)</div>
+                          </div>
+                        </td>
+                        <td class="w-[40%] p-0 align-top">
+                          <table class="w-full h-full border-collapse text-[8.5px]">
+                            <tr class="border-b border-black">
+                              <th class="w-9 bg-slate-100 p-1 text-center font-semibold border-r border-black">作業<br>担当</th>
+                              <td class="p-1">
+                                <div class="pvWorkBranch text-[8px] text-slate-600">中部営業所</div>
+                                <div class="pvWorkerName font-bold text-[9.5px] mt-0.5 min-h-[16px]"></div>
+                              </td>
+                            </tr>
+                            <tr>
+                              <th class="w-9 bg-slate-100 p-1 text-center font-semibold border-r border-black">営業<br>担当</th>
+                              <td class="p-1">
+                                <div class="pvSalesBranch text-[8px] text-slate-600">中部営業所</div>
+                                <div class="pvSalesName font-bold text-[9.5px] mt-0.5 min-h-[16px]"></div>
+                              </td>
+                            </tr>
+                          </table>
+                        </td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+
+                <!-- フッター -->
+                <div class="border-t border-black pt-1 text-[8px] flex justify-between items-end leading-tight text-slate-700">
+                  <div>
+                    <div class="font-bold text-[9px] text-black">バルカートルクシステム株式会社</div>
+                    <div>〒474-0027 愛知県大府市追分町5-225 TEL:0562-45-5578</div>
+                  </div>
+                  <div class="font-mono text-slate-400 font-bold text-[9px]">Hyper Cat v10.01</div>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+
+  <!-- ============================================== -->
+  <!-- 全画面手書きサインモーダル (ボタン上部配置・iPhone横画面最適化) -->
+  <!-- ============================================== -->
+  <div id="signModal" class="fixed inset-0 z-50 bg-black/90 backdrop-blur-sm hidden flex flex-col p-1 sm:p-3">
+    <div class="bg-white w-full h-full rounded-xl flex flex-col shadow-2xl overflow-hidden">
+      
+      <!-- モーダルヘッダー（すべての操作ボタンを画面上部に集約） -->
+      <div class="bg-slate-900 text-white px-3 py-2 flex items-center justify-between shrink-0">
+        <div class="flex items-center space-x-2">
+          <i class="fa-solid fa-signature text-blue-400"></i>
+          <h3 class="font-bold text-xs sm:text-sm">ご署名入力</h3>
+        </div>
+        
+        <!-- 操作ボタン群 -->
+        <div class="flex items-center space-x-2">
+          <button id="modalClearBtn" type="button" class="bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs px-2.5 py-1.5 rounded transition">
+            <i class="fa-solid fa-rotate-left mr-1"></i>クリア
+          </button>
+          <button id="modalCancelBtn" type="button" class="bg-slate-800 hover:bg-slate-700 text-slate-300 text-xs px-2.5 py-1.5 rounded transition">
+            キャンセル
+          </button>
+          <button id="modalSaveSignBtn" type="button" class="bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold px-3 py-1.5 rounded shadow transition active:scale-95 flex items-center space-x-1">
+            <i class="fa-solid fa-check"></i>
+            <span>署名を確定する</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- キャンバス描画領域 (画面一杯) -->
+      <div class="flex-1 bg-slate-50 relative w-full h-full p-1 cursor-crosshair overflow-hidden">
+        <canvas id="modalSignCanvas" class="w-full h-full border border-dashed border-slate-300 rounded-lg bg-white"></canvas>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- PDF出力設定モーダル -->
+  <!-- ============================================== -->
+  <div id="pdfModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-md rounded-2xl shadow-2xl overflow-hidden">
+      
+      <div class="bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between">
+        <h3 class="font-bold text-base flex items-center space-x-2">
+          <i class="fa-solid fa-file-pdf text-emerald-400"></i>
+          <span>A4横2面 PDF出力</span>
+        </h3>
+        <button id="closePdfModalBtn" class="text-slate-400 hover:text-white text-lg">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">出力ファイル名</label>
+          <div class="flex items-center space-x-2">
+            <input type="text" id="customFileNameInput" class="flex-1 text-sm rounded-lg border border-slate-300 px-3 py-2 font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <span class="text-xs text-slate-500 font-mono">.pdf</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">※デフォルト: 作業完了報告書_[入構先名]_yymmdd</p>
+        </div>
+
+        <div class="bg-blue-50 p-3 rounded-xl border border-blue-100 text-xs text-blue-900 space-y-1">
+          <div class="font-bold">A4横・2ページ割付出力</div>
+          <p>左側（弊社控え）と右側（お客様控え）を中央切り取り線入りで1枚のA4横PDFにまとめます。</p>
+        </div>
+
+        <button id="btnDownloadPdf" type="button" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow transition flex items-center justify-center space-x-2 active:scale-98">
+          <i class="fa-solid fa-file-pdf"></i>
+          <span>PDFをダウンロード</span>
+        </button>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- PDF出力・ダウンロード設定モーダル -->
+  <!-- ============================================== -->
+  <div id="pdfModal" class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm hidden flex items-center justify-center p-4">
+    <div class="bg-white w-full max-w-lg rounded-2xl shadow-2xl overflow-hidden animate-in fade-in zoom-in-95 duration-150">
+      
+      <div class="bg-slate-900 text-white px-5 py-3.5 flex items-center justify-between">
+        <h3 class="font-bold text-base flex items-center space-x-2">
+          <i class="fa-solid fa-file-pdf text-emerald-400"></i>
+          <span>PDF帳票出力</span>
+        </h3>
+        <button id="closePdfModalBtn" class="text-slate-400 hover:text-white text-lg">
+          <i class="fa-solid fa-xmark"></i>
+        </button>
+      </div>
+
+      <div class="p-5 space-y-4">
+        <div>
+          <label class="block text-xs font-bold text-slate-700 mb-1">出力ファイル名（自動生成）</label>
+          <div class="flex items-center space-x-2">
+            <input type="text" id="customFileNameInput" class="flex-1 text-sm rounded-lg border border-slate-300 px-3 py-2 font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none">
+            <span class="text-xs text-slate-500 font-mono">.pdf</span>
+          </div>
+          <p class="text-[11px] text-slate-400 mt-1">※デフォルト: 作業完了報告書_[入構先名]_yymmdd (自由に変更可能)</p>
+        </div>
+
+        <div class="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs text-slate-600 space-y-2">
+          <div class="font-bold text-slate-700">出力内容の選択:</div>
+          <p>「弊社控え」および「お客様控え」のPDFを個別にダウンロードまたは2部まとめて出力できます。</p>
+        </div>
+
+        <!-- アクションボタン -->
+        <div class="space-y-2.5 pt-2">
+          <button id="btnDownloadBoth" type="button" class="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold rounded-xl shadow transition flex items-center justify-center space-x-2 active:scale-98">
+            <i class="fa-solid fa-file-zipper"></i>
+            <span>2部まとめて出力（弊社控え & お客様控え）</span>
+          </button>
+
+          <div class="grid grid-cols-2 gap-2.5">
+            <button id="btnDownloadCompany" type="button" class="py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center space-x-1.5">
+              <i class="fa-solid fa-download"></i>
+              <span>弊社控えのみ</span>
+            </button>
+            <button id="btnDownloadCustomer" type="button" class="py-2.5 bg-slate-700 hover:bg-slate-600 text-white text-xs font-bold rounded-xl shadow transition flex items-center justify-center space-x-1.5">
+              <i class="fa-solid fa-download"></i>
+              <span>お客様控えのみ</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+  <!-- ローディング・トーストオーバーレイ -->
+  <div id="loadingOverlay" class="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs hidden flex flex-col items-center justify-center text-white p-4">
+    <div class="w-12 h-12 border-4 border-white/20 border-t-blue-500 rounded-full animate-spin mb-3"></div>
+    <div id="loadingMessage" class="text-sm font-semibold tracking-wide">処理中...</div>
+  </div>
+
+  <!-- メッセージトースト -->
+  <div id="toast" class="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 bg-slate-900 text-white px-4 py-2.5 rounded-xl shadow-lg text-xs sm:text-sm font-medium hidden transition-all duration-300 flex items-center space-x-2">
+    <i id="toastIcon" class="fa-solid fa-circle-check text-emerald-400"></i>
+    <span id="toastMessage">完了しました</span>
+  </div>
+
+  <!-- ============================================== -->
+  <!-- アプリケーションロジック -->
+  <!-- ============================================== -->
+  <script>
+    // --- Gemini API Key 設定 ---
+    const apiKey = ""; 
+    const APP_VERSION = "10.01";
+
+    // --- State & DOM 参照 ---
+    let signatureDataUrl = null;
+
+    const elements = {
+      // フォーム入力
+      inputIssueDate: document.getElementById('inputIssueDate'),
+      inputOrderNo: document.getElementById('inputOrderNo'),
+      inputCustomer: document.getElementById('inputCustomer'),
+      inputSite: document.getElementById('inputSite'),
+      inputSiteDetail: document.getElementById('inputSiteDetail'),
+      inputProjectName: document.getElementById('inputProjectName'),
+      inputFacility: document.getElementById('inputFacility'),
+      inputStartDate: document.getElementById('inputStartDate'),
+      inputEndDate: document.getElementById('inputEndDate'),
+      inputInspectionDate: document.getElementById('inputInspectionDate'),
+      inputRemarks: document.getElementById('inputRemarks'),
+      selectWorkBranch: document.getElementById('selectWorkBranch'),
+      inputWorkerName: document.getElementById('inputWorkerName'),
+      selectSalesBranch: document.getElementById('selectSalesBranch'),
+      inputSalesName: document.getElementById('inputSalesName'),
+      selectRecordStatus: document.getElementById('selectRecordStatus'),
+      chk1: document.getElementById('chk1'),
+      chk2: document.getElementById('chk2'),
+      chk3: document.getElementById('chk3'),
+      chk4: document.getElementById('chk4'),
+      chk5: document.getElementById('chk5'),
+      chkRecord: document.getElementById('chkRecord'),
+
+      // サイン
+      signTriggerArea: document.getElementById('signTriggerArea'),
+      signaturePreviewImg: document.getElementById('signaturePreviewImg'),
+      signaturePlaceholder: document.getElementById('signaturePlaceholder'),
+      btnRemoveSign: document.getElementById('btnRemoveSign'),
+
+      // モーダル
+      signModal: document.getElementById('signModal'),
+      modalSignCanvas: document.getElementById('modalSignCanvas'),
+      modalCancelBtn: document.getElementById('modalCancelBtn'),
+      modalClearBtn: document.getElementById('modalClearBtn'),
+      modalSaveSignBtn: document.getElementById('modalSaveSignBtn'),
+
+      // PDFモーダル
+      pdfModal: document.getElementById('pdfModal'),
+      openPdfModalBtn: document.getElementById('openPdfModalBtn'),
+      closePdfModalBtn: document.getElementById('closePdfModalBtn'),
+      customFileNameInput: document.getElementById('customFileNameInput'),
+      btnDownloadPdf: document.getElementById('btnDownloadPdf'),
+
+      // タブ & UI
+      tabFormBtn: document.getElementById('tabFormBtn'),
+      tabPreviewBtn: document.getElementById('tabPreviewBtn'),
+      formContainer: document.getElementById('formContainer'),
+      previewContainer: document.getElementById('previewContainer'),
+      cameraOcrBtn: document.getElementById('cameraOcrBtn'),
+      cameraInput: document.getElementById('cameraInput'),
+      setTodayBtn: document.getElementById('setTodayBtn'),
+      clearInspectionDateBtn: document.getElementById('clearInspectionDateBtn'),
+      reportSheet: document.getElementById('reportSheet'),
+
+      // オーバーレイ
+      loadingOverlay: document.getElementById('loadingOverlay'),
+      loadingMessage: document.getElementById('loadingMessage'),
+      toast: document.getElementById('toast'),
+      toastMessage: document.getElementById('toastMessage'),
+      toastIcon: document.getElementById('toastIcon')
+    };
+
+    // --- 日付フォーマッタ ---
+    function formatDateToJP(dateStr) {
+      if (!dateStr) return "____年__月__日";
+      const parts = dateStr.split('-');
+      if (parts.length !== 3) return dateStr;
+      return `${parts[0]}年 ${parseInt(parts[1], 10)}月 ${parseInt(parts[2], 10)}日`;
+    }
+
+    function getYYMMDD(dateStr) {
+      if (!dateStr) {
+        const d = new Date();
+        const yy = String(d.getFullYear()).slice(-2);
+        const mm = String(d.getMonth() + 1).padStart(2, '0');
+        const dd = String(d.getDate()).padStart(2, '0');
+        return `${yy}${mm}${dd}`;
+      }
+      const parts = dateStr.split('-');
+      return `${parts[0].slice(-2)}${parts[1].padStart(2, '0')}${parts[2].padStart(2, '0')}`;
+    }
+
+    // --- 初期日付のセットアップ ---
+    function initDates() {
+      const today = new Date();
+      const yyyy = today.getFullYear();
+      const mm = String(today.getMonth() + 1).padStart(2, '0');
+      const dd = String(today.getDate()).padStart(2, '0');
+      const todayStr = `${yyyy}-${mm}-${dd}`;
+
+      elements.inputIssueDate.value = todayStr;
+      elements.inputStartDate.value = todayStr;
+      elements.inputEndDate.value = todayStr;
+      elements.inputInspectionDate.value = todayStr;
+
+      updateAllPreview();
+    }
+
+    // --- プレビュー同期処理（左右両方の領域へ設定） ---
+    function updateAllPreview() {
+      const setMultiText = (selector, val) => {
+        document.querySelectorAll(selector).forEach(el => el.textContent = val);
+      };
+
+      setMultiText('.pvIssueDate', elements.inputIssueDate.value ? formatDateToJP(elements.inputIssueDate.value) : "____年__月__日");
+      setMultiText('.pvOrderNo', elements.inputOrderNo.value || "__________");
+
+      setMultiText('.pvCustomer', elements.inputCustomer.value || "　");
+      setMultiText('.pvSite', elements.inputSite.value || "　");
+      setMultiText('.pvSiteDetail', elements.inputSiteDetail.value || "　");
+      setMultiText('.pvProjectName', elements.inputProjectName.value || "　");
+      setMultiText('.pvFacility', elements.inputFacility.value || "　");
+
+      setMultiText('.pvStartDate', elements.inputStartDate.value ? formatDateToJP(elements.inputStartDate.value) : "年　月　日");
+      setMultiText('.pvEndDate', elements.inputEndDate.value ? formatDateToJP(elements.inputEndDate.value) : "年　月　日");
+      setMultiText('.pvInspectionDate', elements.inputInspectionDate.value ? formatDateToJP(elements.inputInspectionDate.value) : "　　年　月　日");
+
+      setMultiText('.pvChk1', elements.chk1.checked ? "☑" : "☐");
+      setMultiText('.pvChk2', elements.chk2.checked ? "☑" : "☐");
+      setMultiText('.pvChk3', elements.chk3.checked ? "☑" : "☐");
+      setMultiText('.pvChk4', elements.chk4.checked ? "☑" : "☐");
+      setMultiText('.pvChk5', elements.chk5.checked ? "☑" : "☐");
+      setMultiText('.pvChkRecord', elements.chkRecord.checked ? "☑" : "☐");
+      setMultiText('.pvRecordStatus', elements.selectRecordStatus.value);
+
+      setMultiText('.pvRemarks', elements.inputRemarks.value.trim() || "特記事項なし");
+
+      setMultiText('.pvWorkBranch', elements.selectWorkBranch.value);
+      setMultiText('.pvWorkerName', elements.inputWorkerName.value || "　");
+      setMultiText('.pvSalesBranch', elements.selectSalesBranch.value);
+      setMultiText('.pvSalesName', elements.inputSalesName.value || "　");
+
+      updateDefaultFileName();
+    }
+
+    function updateDefaultFileName() {
+      const siteName = elements.inputSite.value.trim() || "現場名";
+      const dateCode = getYYMMDD(elements.inputEndDate.value || elements.inputIssueDate.value);
+      elements.customFileNameInput.value = `作業完了報告書_${siteName}_${dateCode}`;
+    }
+
+    // イベント登録
+    const inputFields = [
+      elements.inputIssueDate, elements.inputOrderNo, elements.inputCustomer, elements.inputSite,
+      elements.inputSiteDetail, elements.inputProjectName, elements.inputFacility, elements.inputStartDate,
+      elements.inputEndDate, elements.inputInspectionDate, elements.inputRemarks, elements.selectWorkBranch,
+      elements.inputWorkerName, elements.selectSalesBranch, elements.inputSalesName, elements.selectRecordStatus,
+      elements.chk1, elements.chk2, elements.chk3, elements.chk4, elements.chk5, elements.chkRecord
+    ];
+
+    inputFields.forEach(el => {
+      el.addEventListener('input', updateAllPreview);
+      el.addEventListener('change', updateAllPreview);
+    });
+
+    elements.setTodayBtn.addEventListener('click', initDates);
+    elements.clearInspectionDateBtn.addEventListener('click', () => {
+      elements.inputInspectionDate.value = '';
+      updateAllPreview();
+    });
+
+    // --- モバイル タブ切替 ---
+    elements.tabFormBtn.addEventListener('click', () => {
+      elements.formContainer.classList.remove('hidden');
+      elements.formContainer.classList.add('block');
+      elements.previewContainer.classList.add('hidden');
+      elements.previewContainer.classList.remove('block');
+
+      elements.tabFormBtn.className = "flex-1 py-2.5 text-center text-sm font-medium text-blue-400 border-b-2 border-blue-400 flex items-center justify-center space-x-2";
+      elements.tabPreviewBtn.className = "flex-1 py-2.5 text-center text-sm font-medium text-slate-400 border-b-2 border-transparent flex items-center justify-center space-x-2";
+    });
+
+    elements.tabPreviewBtn.addEventListener('click', () => {
+      elements.formContainer.classList.add('hidden');
+      elements.formContainer.classList.remove('block');
+      elements.previewContainer.classList.remove('hidden');
+      elements.previewContainer.classList.add('block');
+
+      elements.tabPreviewBtn.className = "flex-1 py-2.5 text-center text-sm font-medium text-blue-400 border-b-2 border-blue-400 flex items-center justify-center space-x-2";
+      elements.tabFormBtn.className = "flex-1 py-2.5 text-center text-sm font-medium text-slate-400 border-b-2 border-transparent flex items-center justify-center space-x-2";
+      
+      updateAllPreview();
+    });
+
+    // --- 手書きサイン機能（固定太さ・操作ボタン上部化） ---
+    let canvas = elements.modalSignCanvas;
+    let ctx = canvas.getContext('2d');
+    let isDrawing = false;
+    let hasDrawn = false;
+    let lastX = 0;
+    let lastY = 0;
+
+    function resizeCanvas() {
+      const rect = canvas.parentElement.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      canvas.width = rect.width * dpr;
+      canvas.height = rect.height * dpr;
+      ctx.scale(dpr, dpr);
+      ctx.lineCap = 'round';
+      ctx.lineJoin = 'round';
+      ctx.strokeStyle = '#0f172a'; // 固定ダークネイビー/ブラック
+      ctx.lineWidth = 3.5; // 太さは固定
+    }
+
+    function startDrawing(e) {
+      isDrawing = true;
+      hasDrawn = true;
+      const pos = getPos(e);
+      lastX = pos.x;
+      lastY = pos.y;
+    }
+
+    function draw(e) {
+      if (!isDrawing) return;
+      e.preventDefault();
+      const pos = getPos(e);
+      ctx.beginPath();
+      ctx.moveTo(lastX, lastY);
+      ctx.lineTo(pos.x, pos.y);
+      ctx.stroke();
+      lastX = pos.x;
+      lastY = pos.y;
+    }
+
+    function stopDrawing() {
+      isDrawing = false;
+    }
+
+    function getPos(e) {
+      const rect = canvas.getBoundingClientRect();
+      let clientX = e.clientX;
+      let clientY = e.clientY;
+      if (e.touches && e.touches.length > 0) {
+        clientX = e.touches[0].clientX;
+        clientY = e.touches[0].clientY;
+      }
+      return {
+        x: clientX - rect.left,
+        y: clientY - rect.top
+      };
+    }
+
+    canvas.addEventListener('mousedown', startDrawing);
+    canvas.addEventListener('mousemove', draw);
+    canvas.addEventListener('mouseup', stopDrawing);
+    canvas.addEventListener('mouseout', stopDrawing);
+
+    canvas.addEventListener('touchstart', startDrawing, { passive: false });
+    canvas.addEventListener('touchmove', draw, { passive: false });
+    canvas.addEventListener('touchend', stopDrawing);
+
+    // モーダル表示
+    elements.signTriggerArea.addEventListener('click', (e) => {
+      if (e.target.closest('#btnRemoveSign')) return;
+      elements.signModal.classList.remove('hidden');
+      setTimeout(() => {
+        resizeCanvas();
+      }, 50);
+    });
+
+    elements.modalClearBtn.addEventListener('click', () => {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      hasDrawn = false;
+    });
+
+    function closeSignModal() {
+      elements.signModal.classList.add('hidden');
+    }
+    elements.modalCancelBtn.addEventListener('click', closeSignModal);
+
+    elements.modalSaveSignBtn.addEventListener('click', () => {
+      if (!hasDrawn) {
+        showToast("サインが記入されていません", "warning");
+        return;
+      }
+      signatureDataUrl = canvas.toDataURL('image/png');
+      
+      elements.signaturePreviewImg.src = signatureDataUrl;
+      elements.signaturePreviewImg.classList.remove('hidden');
+      elements.signaturePlaceholder.classList.add('hidden');
+      elements.btnRemoveSign.classList.remove('hidden');
+
+      document.querySelectorAll('.pvSignatureImg').forEach(img => {
+        img.src = signatureDataUrl;
+        img.classList.remove('hidden');
+      });
+      document.querySelectorAll('.pvSignaturePlaceholder').forEach(ph => ph.classList.add('hidden'));
+
+      closeSignModal();
+      showToast("署名を確定しました", "success");
+    });
+
+    elements.btnRemoveSign.addEventListener('click', (e) => {
+      e.stopPropagation();
+      signatureDataUrl = null;
+      hasDrawn = false;
+      elements.signaturePreviewImg.src = '';
+      elements.signaturePreviewImg.classList.add('hidden');
+      elements.signaturePlaceholder.classList.remove('hidden');
+      elements.btnRemoveSign.classList.add('hidden');
+
+      document.querySelectorAll('.pvSignatureImg').forEach(img => {
+        img.src = '';
+        img.classList.add('hidden');
+      });
+      document.querySelectorAll('.pvSignaturePlaceholder').forEach(ph => ph.classList.remove('hidden'));
+      showToast("署名を消去しました", "info");
+    });
+
+    window.addEventListener('resize', () => {
+      if (!elements.signModal.classList.contains('hidden')) {
+        resizeCanvas();
+      }
+    });
+
+    // --- カメラOCR機能 ---
+    elements.cameraOcrBtn.addEventListener('click', () => elements.cameraInput.click());
+    elements.cameraInput.addEventListener('change', async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+
+      showLoading("AIによる画像解析中...");
+      try {
+        const base64Data = await fileToBase64(file);
+        const ocrResult = await recognizeDocumentWithGemini(base64Data);
+
+        if (ocrResult) {
+          if (ocrResult.customer) elements.inputCustomer.value = ocrResult.customer;
+          if (ocrResult.site) elements.inputSite.value = ocrResult.site;
+          if (ocrResult.siteDetail) elements.inputSiteDetail.value = ocrResult.siteDetail;
+          if (ocrResult.projectName) elements.inputProjectName.value = ocrResult.projectName;
+          if (ocrResult.facility) elements.inputFacility.value = ocrResult.facility;
+          if (ocrResult.orderNo) elements.inputOrderNo.value = ocrResult.orderNo;
+          if (ocrResult.startDate) elements.inputStartDate.value = ocrResult.startDate;
+          if (ocrResult.endDate) elements.inputEndDate.value = ocrResult.endDate;
+
+          updateAllPreview();
+          showToast("AIによる自動入力を完了しました", "success");
+        }
+      } catch (err) {
+        showToast("読み取りに失敗しました", "error");
+      } finally {
+        hideLoading();
+        elements.cameraInput.value = "";
+      }
+    });
+
+    function fileToBase64(file) {
+      return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = reject;
+        reader.readAsDataURL(file);
+      });
+    }
+
+    async function recognizeDocumentWithGemini(base64Image) {
+      const prompt = `画像から customer, site, siteDetail, projectName, facility, orderNo, startDate, endDate を抽出しJSONで回答してください。`;
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash-preview-09-2025:generateContent?key=${apiKey}`;
+
+      const payload = {
+        contents: [{ role: "user", parts: [{ text: prompt }, { inlineData: { mimeType: "image/jpeg", data: base64Image } }] }],
+        generationConfig: {
+          responseMimeType: "application/json",
+          responseSchema: {
+            type: "OBJECT",
+            properties: {
+              customer: { type: "STRING" },
+              site: { type: "STRING" },
+              siteDetail: { type: "STRING" },
+              projectName: { type: "STRING" },
+              facility: { type: "STRING" },
+              orderNo: { type: "STRING" },
+              startDate: { type: "STRING" },
+              endDate: { type: "STRING" }
+            }
+          }
+        }
+      };
+
+      const res = await fetch(url, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
+      if (!res.ok) return null;
+      const data = await res.json();
+      const text = data.candidates?.[0]?.content?.parts?.[0]?.text;
+      return text ? JSON.parse(text) : null;
+    }
+
+    // --- A4横・2面割り付け PDF出力 ---
+    elements.openPdfModalBtn.addEventListener('click', () => {
+      updateDefaultFileName();
+      elements.pdfModal.classList.remove('hidden');
+    });
+
+    elements.closePdfModalBtn.addEventListener('click', () => {
+      elements.pdfModal.classList.add('hidden');
+    });
+
+    elements.btnDownloadPdf.addEventListener('click', async () => {
+      elements.pdfModal.classList.add('hidden');
+      showLoading("A4横（2面割り付け）PDFを生成中...");
+
+      try {
+        const fileName = (elements.customFileNameInput.value.trim() || "作業完了報告書") + ".pdf";
+
+        const opt = {
+          margin: [3, 3, 3, 3],
+          filename: fileName,
+          image: { type: 'jpeg', quality: 0.98 },
+          html2canvas: { scale: 2.2, useCORS: true, letterRendering: true },
+          jsPDF: { unit: 'mm', format: 'a4', orientation: 'landscape' } // 横向き設定
+        };
+
+        await html2pdf().set(opt).from(elements.reportSheet).save();
+        showToast("PDFのダウンロードが完了しました", "success");
+      } catch (err) {
+        console.error(err);
+        showToast("PDF作成に失敗しました", "error");
+      } finally {
+        hideLoading();
+      }
+    });
+
+    // --- トースト＆ローディング ---
+    function showLoading(msg) {
+      elements.loadingMessage.innerText = msg;
+      elements.loadingOverlay.classList.remove('hidden');
+    }
+
+    function hideLoading() {
+      elements.loadingOverlay.classList.add('hidden');
+    }
+
+    function showToast(msg, type = "info") {
+      elements.toastMessage.textContent = msg;
+      elements.toastIcon.className = type === "success" ? "fa-solid fa-circle-check text-emerald-400" :
+                                      type === "warning" ? "fa-solid fa-triangle-exclamation text-amber-400" :
+                                      type === "error" ? "fa-solid fa-circle-xmark text-red-400" : "fa-solid fa-circle-info text-blue-400";
+      elements.toast.classList.remove('hidden');
+      setTimeout(() => elements.toast.classList.add('hidden'), 3000);
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+      initDates();
+    });
+  </script>
+</body>
+</html>
